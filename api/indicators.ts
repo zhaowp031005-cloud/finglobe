@@ -1,5 +1,5 @@
-import { macroFinancialIndicators } from "../src/data/macroFinancialData"
-import type { FinancialIndicator } from "../src/data/macroFinancialData"
+import { macroFinancialIndicators } from "../src/data/macroFinancialData.js"
+import type { FinancialIndicator } from "../src/data/macroFinancialData.js"
 
 type RequestLike = {
   method?: string
@@ -103,4 +103,3 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     errors: errors.length ? errors : undefined,
   })
 }
-

@@ -33,6 +33,8 @@ type ExtractedEvent = {
   sources?: Array<{ url?: string; title?: string; publishedAt?: string; source?: string }>
 }
 
+type SourceItem = { url?: string; title?: string; publishedAt?: string; source?: string }
+
 function headerValue(headers: Record<string, string | string[] | undefined> | undefined, key: string) {
   if (!headers) return undefined
   const v = headers[key] ?? headers[key.toLowerCase()]
@@ -48,6 +50,11 @@ function toNumber(value: unknown) {
 
 function toString(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function optionalString(value: string): string | undefined {
+  const v = value.trim()
+  return v ? v : undefined
 }
 
 function clampLatLng(lat: number, lng: number) {
@@ -243,13 +250,13 @@ function coerceEvent(raw: unknown): ExtractedEvent | null {
         const sr = asRecord(s)
         if (!sr) return null
         return {
-          url: toString(sr["url"]),
-          title: toString(sr["title"]),
-          publishedAt: toString(sr["publishedAt"]),
-          source: toString(sr["source"]),
+          url: optionalString(toString(sr["url"])),
+          title: optionalString(toString(sr["title"])),
+          publishedAt: optionalString(toString(sr["publishedAt"])),
+          source: optionalString(toString(sr["source"])),
         }
       })
-      .filter((s): s is { url?: string; title?: string; publishedAt?: string; source?: string } => Boolean(s && (s.url || s.title))),
+      .filter((s): s is SourceItem => Boolean(s && (s.url || s.title))),
   }
 }
 
