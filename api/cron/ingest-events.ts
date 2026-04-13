@@ -246,7 +246,7 @@ function coerceEvent(raw: unknown): ExtractedEvent | null {
     occurred_at: occurred_at || undefined,
     impact: { sectors, positiveCompanies, negativeCompanies },
     sources: sources
-      .map((s) => {
+      .map((s): SourceItem | null => {
         const sr = asRecord(s)
         if (!sr) return null
         return {
@@ -256,7 +256,8 @@ function coerceEvent(raw: unknown): ExtractedEvent | null {
           source: optionalString(toString(sr["source"])),
         }
       })
-      .filter((s): s is SourceItem => Boolean(s && (s.url || s.title))),
+      .filter((item): item is NonNullable<typeof item> => item !== null)
+      .filter((item) => Boolean(item.url || item.title)),
   }
 }
 
