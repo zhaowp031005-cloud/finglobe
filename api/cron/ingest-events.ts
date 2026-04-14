@@ -138,7 +138,7 @@ function buildDeepSeekPrompt(articles: NewsApiArticle[]) {
 
   return [
     "你是一个信息抽取系统。",
-    "请从给定的新闻列表中，抽取过去 12 小时内最重要的 5-12 条全球宏观经济/地缘政治/自然灾害事件，并输出严格 JSON（不要 markdown，不要解释）。",
+    "请从给定的新闻列表中，抽取过去 24 小时内最重要的 30 条全球宏观经济/地缘政治/自然灾害事件，并输出严格 JSON（不要 markdown，不要解释）。",
     "输出必须是 JSON 数组，每个元素结构如下：",
     "{",
     '  "title": string,',
@@ -155,6 +155,7 @@ function buildDeepSeekPrompt(articles: NewsApiArticle[]) {
     "- lat/lng 请给出事件发生地的合理近似坐标（国家/城市级即可）。",
     "- sectors / companies 要给出金融含义上的推断（可为空数组，但字段必须存在）。",
     "- sources 至少包含 1 条来源。",
+    "- 必须输出 30 条；如果可用新闻不足，请尽可能多输出，但不要杜撰。",
     "",
     "新闻列表：",
     JSON.stringify(compact),
@@ -346,7 +347,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
   }
 
   try {
-    const articles = await fetchNewsArticles(newsApiKey, 12)
+    const articles = await fetchNewsArticles(newsApiKey, 24)
     const prompt = buildDeepSeekPrompt(articles)
     const content = await deepSeekExtract(deepSeekKey, prompt)
     const parsed = tryParseJsonArray(content)

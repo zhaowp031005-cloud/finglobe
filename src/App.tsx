@@ -73,7 +73,7 @@ function App() {
     };
 
     fetchEvents();
-    const timer = window.setInterval(fetchEvents, 5 * 60 * 1000);
+    const timer = window.setInterval(fetchEvents, 24 * 60 * 60 * 1000);
 
     return () => {
       cancelled = true;
