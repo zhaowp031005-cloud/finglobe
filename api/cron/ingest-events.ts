@@ -36,6 +36,8 @@ type ExtractedEvent = {
 
 type SourceItem = { url?: string; title?: string; publishedAt?: string; source?: string }
 
+const CODE_VERSION = "2026-04-15.1"
+
 function headerValue(headers: Record<string, string | string[] | undefined> | undefined, key: string) {
   if (!headers) return undefined
   const v = headers[key] ?? headers[key.toLowerCase()]
@@ -85,22 +87,12 @@ async function fetchNewsArticles(newsApiKey: string, hoursBack: number) {
   url.searchParams.set(
     "q",
     [
-      "geopolitical",
+      "geopolitics",
       "conflict",
-      "war",
-      "election",
-      "central bank",
-      "interest rate",
-      "inflation",
-      "sanctions",
-      "earthquake",
-      "hurricane",
-      "flood",
-      "tsunami",
-      "oil",
-      "OPEC",
-      "currency",
-      "FX",
+      "economy",
+      "finance",
+      "disaster",
+      "market"
     ].join(" OR ")
   )
   url.searchParams.set("language", "en")
@@ -156,6 +148,9 @@ function buildDeepSeekPrompt(articles: NewsApiArticle[]) {
     "- sectors / companies 要给出金融含义上的推断（可为空数组，但字段必须存在）。",
     "- sources 至少包含 1 条来源。",
     "- 必须输出 30 条；如果可用新闻不足，请尽可能多输出，但不要杜撰。",
+    "",
+    "示例（仅用于格式参考，内容不要照抄）：",
+    '[{"title":"例：日本央行释放政策信号","summary":"央行暗示未来可能调整利率路径。","latest_updates":"市场关注下次会议声明措辞变化。","category":"economy","lat":35.6895,"lng":139.6917,"occurred_at":"2026-04-14T08:00:00Z","impact":{"sectors":["银行","外汇"],"positiveCompanies":[],"negativeCompanies":[]},"sources":[{"url":"https://example.com/a","title":"BoJ signal","publishedAt":"2026-04-14T08:10:00Z","source":"Reuters"}]}]',
     "",
     "新闻列表：",
     JSON.stringify(compact),
@@ -218,16 +213,29 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>
 }
 
+function extractRawEvents(parsed: unknown): unknown[] {
+  if (Array.isArray(parsed)) return parsed
+  const obj = asRecord(parsed)
+  if (!obj) return []
+  const maybeEvents = obj["events"]
+  if (Array.isArray(maybeEvents)) return maybeEvents
+  const maybeData = obj["data"]
+  if (Array.isArray(maybeData)) return maybeData
+  return []
+}
+
 function coerceEvent(raw: unknown): ExtractedEvent | null {
   const obj = asRecord(raw)
   if (!obj) return null
 
-  const title = toString(obj["title"])
-  const summary = toString(obj["summary"])
-  const latest_updates = toString(obj["latest_updates"] ?? obj["latestUpdates"])
+  const title = toString(obj["title"] ?? obj["headline"] ?? obj["name"])
+  const summary = toString(obj["summary"] ?? obj["description"]) || title
+  const latest_updates =
+    toString(obj["latest_updates"] ?? obj["latestUpdates"] ?? obj["latest_update"] ?? obj["latestUpdate"]) || summary
   const category = normalizeCategory(toString(obj["category"]))
-  const lat = toNumber(obj["lat"])
-  const lng = toNumber(obj["lng"])
+  const location = asRecord(obj["location"]) ?? asRecord(obj["geo"]) ?? null
+  const lat = toNumber(obj["lat"] ?? obj["latitude"] ?? location?.["lat"] ?? location?.["latitude"])
+  const lng = toNumber(obj["lng"] ?? obj["lon"] ?? obj["longitude"] ?? location?.["lng"] ?? location?.["lon"] ?? location?.["longitude"])
   const occurred_at = toString(obj["occurred_at"] ?? obj["occurredAt"])
 
   const impact = asRecord(obj["impact"]) ?? {}
@@ -319,7 +327,7 @@ async function upsertEventsToSupabase(params: {
 
 export default async function handler(req: RequestLike, res: ResponseLike) {
   if (req.method && req.method !== "GET") {
-    return res.status(405).json({ error: "Method Not Allowed" })
+    return res.status(405).json({ error: "Method Not Allowed", codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
   }
 
   const ingestSecret = process.env.INGEST_SECRET
@@ -327,42 +335,63 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
   const isCron = headerValue(req.headers, "x-vercel-cron") === "1"
   const secretFromQuery = queryValue(req.query, "secret")
   if (ingestSecret && !isCron && auth !== `Bearer ${ingestSecret}` && secretFromQuery !== ingestSecret) {
-    return res.status(401).json({ error: "Unauthorized" })
+    return res.status(401).json({ error: "Unauthorized", codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
   }
 
   const supabaseUrl = process.env.SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!supabaseUrl || !serviceKey) {
-    return res.status(200).json({ ok: false, warning: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY" })
+    return res
+      .status(200)
+      .json({ ok: false, warning: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY", codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
   }
 
   const newsApiKey = process.env.NEWSAPI_KEY
   const deepSeekKey = process.env.DEEPSEEK_API_KEY
 
   if (!newsApiKey) {
-    return res.status(200).json({ ok: false, warning: "Missing NEWSAPI_KEY" })
+    return res.status(200).json({ ok: false, warning: "Missing NEWSAPI_KEY", codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
   }
   if (!deepSeekKey) {
-    return res.status(200).json({ ok: false, warning: "Missing DEEPSEEK_API_KEY" })
+    return res.status(200).json({ ok: false, warning: "Missing DEEPSEEK_API_KEY", codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
   }
 
   try {
     const articles = await fetchNewsArticles(newsApiKey, 24)
+    if (articles.length === 0) {
+      return res
+        .status(200)
+        .json({ ok: false, warning: "NewsAPI returned 0 articles", codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
+    }
     const prompt = buildDeepSeekPrompt(articles)
     const content = await deepSeekExtract(deepSeekKey, prompt)
     const parsed = tryParseJsonArray(content)
-    const rawEvents = Array.isArray(parsed) ? parsed : []
+    const rawEvents = extractRawEvents(parsed)
     const events = rawEvents.map(coerceEvent).filter(Boolean) as ExtractedEvent[]
 
     if (!events.length) {
-      return res.status(200).json({ ok: false, warning: "No events extracted", extracted: 0 })
+      const parsedObj = asRecord(parsed)
+      return res.status(200).json({
+        ok: false,
+        warning: "No events extracted",
+        extracted: 0,
+        codeVersion: CODE_VERSION,
+        serverTime: new Date().toISOString(),
+        debug: {
+          articles: articles.length,
+          llmChars: content.length,
+          parsedType: Array.isArray(parsed) ? "array" : parsedObj ? "object" : typeof parsed,
+          parsedKeys: parsedObj ? Object.keys(parsedObj).slice(0, 10) : undefined,
+          rawEvents: rawEvents.length,
+        },
+      })
     }
 
     await upsertEventsToSupabase({ supabaseUrl, serviceKey, events })
 
-    return res.status(200).json({ ok: true, ingested: events.length })
+    return res.status(200).json({ ok: true, ingested: events.length, codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return res.status(200).json({ ok: false, warning: message })
+    return res.status(200).json({ ok: false, warning: message, codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
   }
 }

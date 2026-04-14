@@ -131,7 +131,7 @@ export default function GlobalMacroFinancialDashboard({ onIndicatorClick }: Glob
     };
 
     fetchIndicators();
-    const timer = setInterval(fetchIndicators, 15000);
+    const timer = setInterval(fetchIndicators, 65000); // 65 seconds to avoid Twelve Data free tier 8 credits/min limit
 
     return () => {
       cancelled = true;
