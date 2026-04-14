@@ -1,6 +1,7 @@
 type RequestLike = {
   method?: string
   headers?: Record<string, string | string[] | undefined>
+  query?: Record<string, string | string[] | undefined>
 }
 
 type ResponseLike = {
@@ -38,6 +39,14 @@ type SourceItem = { url?: string; title?: string; publishedAt?: string; source?:
 function headerValue(headers: Record<string, string | string[] | undefined> | undefined, key: string) {
   if (!headers) return undefined
   const v = headers[key] ?? headers[key.toLowerCase()]
+  if (typeof v === "string") return v
+  if (Array.isArray(v)) return v[0]
+  return undefined
+}
+
+function queryValue(query: Record<string, string | string[] | undefined> | undefined, key: string) {
+  if (!query) return undefined
+  const v = query[key]
   if (typeof v === "string") return v
   if (Array.isArray(v)) return v[0]
   return undefined
@@ -315,7 +324,8 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
   const ingestSecret = process.env.INGEST_SECRET
   const auth = headerValue(req.headers, "authorization")
   const isCron = headerValue(req.headers, "x-vercel-cron") === "1"
-  if (ingestSecret && !isCron && auth !== `Bearer ${ingestSecret}`) {
+  const secretFromQuery = queryValue(req.query, "secret")
+  if (ingestSecret && !isCron && auth !== `Bearer ${ingestSecret}` && secretFromQuery !== ingestSecret) {
     return res.status(401).json({ error: "Unauthorized" })
   }
 

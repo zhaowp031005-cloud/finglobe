@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import Globe from 'react-globe.gl';
 import type { GlobeMethods } from 'react-globe.gl';
-import { categoryIcons, mockEvents } from '../data/mockEvents';
+import { categoryIcons } from '../data/mockEvents';
 import type { GlobeEvent } from '../data/mockEvents';
 
 interface FinGlobeProps {
   onEventHover: (event: GlobeEvent | null) => void;
   focusLocation?: { lat: number; lng: number; altitude?: number } | null;
+  events?: GlobeEvent[];
 }
 
-export default function FinGlobe({ onEventHover, focusLocation }: FinGlobeProps) {
+export default function FinGlobe({ onEventHover, focusLocation, events }: FinGlobeProps) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth - 320, // Adjust for the sidebar width
@@ -51,8 +52,8 @@ export default function FinGlobe({ onEventHover, focusLocation }: FinGlobeProps)
   }, [focusLocation]);
 
   const htmlElementData = useMemo(() => {
-    return mockEvents;
-  }, []);
+    return events ?? [];
+  }, [events]);
 
   return (
     <div className="absolute inset-0 bg-slate-950 flex items-center justify-center overflow-hidden">
