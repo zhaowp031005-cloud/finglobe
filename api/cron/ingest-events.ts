@@ -151,7 +151,7 @@ async function fetchNewsArticles(newsApiKey: string, hoursBack: number): Promise
 
 function buildDeepSeekPrompt(articles: NewsApiArticle[]) {
   const compact = articles
-    .slice(0, 40)
+    .slice(0, 100)
     .map((a) => ({
       title: a.title ?? "",
       description: a.description ?? "",
@@ -162,7 +162,8 @@ function buildDeepSeekPrompt(articles: NewsApiArticle[]) {
 
   return [
     "你是一个信息抽取系统。",
-    "请从给定的新闻列表中，抽取过去 24 小时内最重要的全球宏观经济/地缘政治/自然灾害事件（最多 30 条），并输出严格 JSON（不要 markdown，不要解释）。",
+    "请从给定的新闻列表中，抽取过去 24 小时内最重要的 30 条全球宏观经济/地缘政治/自然灾害事件，并输出严格 JSON（不要 markdown，不要解释）。",
+    "语言要求：title / summary / latest_updates / impact.sectors / impact.positiveCompanies / impact.negativeCompanies 必须使用简体中文输出（不要英文句子）。公司/机构如无法确定中文名，可保留英文简称或股票代码。",
     "输出必须是 JSON 数组，每个元素结构如下：",
     "{",
     '  "title": string,',
@@ -177,9 +178,10 @@ function buildDeepSeekPrompt(articles: NewsApiArticle[]) {
     "}",
     "要求：",
     "- lat/lng 请给出事件发生地的合理近似坐标（国家/城市级即可）。",
+    "- 每条事件都必须包含可解析的 lat/lng（不要留空，不要 null）。",
     "- sectors / companies 要给出金融含义上的推断（可为空数组，但字段必须存在）。",
     "- sources 至少包含 1 条来源。",
-    "- 如果可用新闻不足，请输出尽可能多，但不要杜撰。",
+    "- 必须输出 30 条；如果独立新闻不足，请在不引入新闻列表之外事实的前提下，对同一新闻按国家/城市/行业影响拆分成多个事件条目。",
     "",
     "示例（仅用于格式参考，内容不要照抄）：",
     '[{"title":"例：日本央行释放政策信号","summary":"央行暗示未来可能调整利率路径。","latest_updates":"市场关注下次会议声明措辞变化。","category":"economy","lat":35.6895,"lng":139.6917,"occurred_at":"2026-04-14T08:00:00Z","impact":{"sectors":["银行","外汇"],"positiveCompanies":[],"negativeCompanies":[]},"sources":[{"url":"https://example.com/a","title":"BoJ signal","publishedAt":"2026-04-14T08:10:00Z","source":"Reuters"}]}]',
@@ -436,7 +438,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     let parsed: unknown
     try {
       parsed = tryParseJsonArray(content)
-    } catch (error) {
+    } catch {
       const repairedText = await deepSeekRepairJsonArray(deepSeekKey, content)
       parsed = tryParseJsonArray(repairedText)
     }

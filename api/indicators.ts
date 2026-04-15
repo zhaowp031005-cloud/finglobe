@@ -15,14 +15,14 @@ type ResponseLike = {
 const CODE_VERSION = "2026-04-15.1"
 
 const DEFAULT_TWELVE_SYMBOLS: Record<string, string> = {
-  shcomp: "000001.SH",
-  ixic: "IXIC",
-  n225: "N225",
+  shcomp: "ASHR",
+  ixic: "QQQ",
+  n225: "EWJ",
   xauusd: "XAU/USD",
-  brentoil: "BRENT",
-  us10y: "US10Y",
-  dxy: "DXY",
-  vix: "VIX",
+  brentoil: "BNO",
+  us10y: "TLT",
+  dxy: "UUP",
+  vix: "VXX",
 }
 
 type TwelveQuote = {
