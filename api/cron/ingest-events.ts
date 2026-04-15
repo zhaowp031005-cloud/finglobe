@@ -81,40 +81,72 @@ async function sha256Hex(input: string) {
   return createHash("sha256").update(input).digest("hex")
 }
 
-async function fetchNewsArticles(newsApiKey: string, hoursBack: number) {
+async function fetchNewsArticles(newsApiKey: string, hoursBack: number): Promise<{
+  articles: NewsApiArticle[]
+  debug: { endpoint: "everything" | "top-headlines"; totalResults?: number }
+}> {
   const from = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString()
-  const url = new URL("https://newsapi.org/v2/everything")
-  url.searchParams.set(
-    "q",
-    [
-      "geopolitics",
-      "conflict",
-      "economy",
-      "finance",
-      "disaster",
-      "market"
-    ].join(" OR ")
-  )
-  url.searchParams.set("language", "en")
-  url.searchParams.set("sortBy", "publishedAt")
-  url.searchParams.set("pageSize", "100")
-  url.searchParams.set("from", from)
 
-  const resp = await fetch(url.toString(), {
+  const q = ["market", "economy", "geopolitics", "conflict", "sanctions", "central bank", "inflation", "oil"].join(" OR ")
+
+  const urlEverything = new URL("https://newsapi.org/v2/everything")
+  urlEverything.searchParams.set("q", q)
+  urlEverything.searchParams.set("language", "en")
+  urlEverything.searchParams.set("sortBy", "publishedAt")
+  urlEverything.searchParams.set("pageSize", "100")
+  urlEverything.searchParams.set("from", from)
+
+  const respEverything = await fetch(urlEverything.toString(), {
     headers: { "X-Api-Key": newsApiKey },
   })
 
-  if (!resp.ok) {
-    const text = await resp.text()
+  if (!respEverything.ok) {
+    const text = await respEverything.text()
     throw new Error(text)
   }
 
-  const data = (await resp.json()) as unknown
-  const parsed = data as { status?: string; articles?: NewsApiArticle[]; message?: string }
-  if (parsed.status !== "ok" || !Array.isArray(parsed.articles)) {
-    throw new Error(parsed.message ?? "NewsAPI error")
+  const dataEverything = (await respEverything.json()) as unknown
+  const parsedEverything = dataEverything as {
+    status?: string
+    articles?: NewsApiArticle[]
+    message?: string
+    totalResults?: number
   }
-  return parsed.articles
+  if (parsedEverything.status !== "ok" || !Array.isArray(parsedEverything.articles)) {
+    throw new Error(parsedEverything.message ?? "NewsAPI error")
+  }
+
+  if (parsedEverything.articles.length > 0) {
+    return {
+      articles: parsedEverything.articles,
+      debug: { endpoint: "everything", totalResults: parsedEverything.totalResults },
+    }
+  }
+
+  const urlTop = new URL("https://newsapi.org/v2/top-headlines")
+  urlTop.searchParams.set("country", "us")
+  urlTop.searchParams.set("category", "business")
+  urlTop.searchParams.set("pageSize", "100")
+
+  const respTop = await fetch(urlTop.toString(), {
+    headers: { "X-Api-Key": newsApiKey },
+  })
+
+  if (!respTop.ok) {
+    const text = await respTop.text()
+    throw new Error(text)
+  }
+
+  const dataTop = (await respTop.json()) as unknown
+  const parsedTop = dataTop as { status?: string; articles?: NewsApiArticle[]; message?: string; totalResults?: number }
+  if (parsedTop.status !== "ok" || !Array.isArray(parsedTop.articles)) {
+    throw new Error(parsedTop.message ?? "NewsAPI error")
+  }
+
+  return {
+    articles: parsedTop.articles,
+    debug: { endpoint: "top-headlines", totalResults: parsedTop.totalResults },
+  }
 }
 
 function buildDeepSeekPrompt(articles: NewsApiArticle[]) {
@@ -130,7 +162,7 @@ function buildDeepSeekPrompt(articles: NewsApiArticle[]) {
 
   return [
     "你是一个信息抽取系统。",
-    "请从给定的新闻列表中，抽取过去 24 小时内最重要的 30 条全球宏观经济/地缘政治/自然灾害事件，并输出严格 JSON（不要 markdown，不要解释）。",
+    "请从给定的新闻列表中，抽取过去 24 小时内最重要的全球宏观经济/地缘政治/自然灾害事件（最多 30 条），并输出严格 JSON（不要 markdown，不要解释）。",
     "输出必须是 JSON 数组，每个元素结构如下：",
     "{",
     '  "title": string,',
@@ -147,7 +179,7 @@ function buildDeepSeekPrompt(articles: NewsApiArticle[]) {
     "- lat/lng 请给出事件发生地的合理近似坐标（国家/城市级即可）。",
     "- sectors / companies 要给出金融含义上的推断（可为空数组，但字段必须存在）。",
     "- sources 至少包含 1 条来源。",
-    "- 必须输出 30 条；如果可用新闻不足，请尽可能多输出，但不要杜撰。",
+    "- 如果可用新闻不足，请输出尽可能多，但不要杜撰。",
     "",
     "示例（仅用于格式参考，内容不要照抄）：",
     '[{"title":"例：日本央行释放政策信号","summary":"央行暗示未来可能调整利率路径。","latest_updates":"市场关注下次会议声明措辞变化。","category":"economy","lat":35.6895,"lng":139.6917,"occurred_at":"2026-04-14T08:00:00Z","impact":{"sectors":["银行","外汇"],"positiveCompanies":[],"negativeCompanies":[]},"sources":[{"url":"https://example.com/a","title":"BoJ signal","publishedAt":"2026-04-14T08:10:00Z","source":"Reuters"}]}]',
@@ -357,11 +389,16 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
   }
 
   try {
-    const articles = await fetchNewsArticles(newsApiKey, 24)
+    const news = await fetchNewsArticles(newsApiKey, 24)
+    const articles = news.articles
     if (articles.length === 0) {
-      return res
-        .status(200)
-        .json({ ok: false, warning: "NewsAPI returned 0 articles", codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
+      return res.status(200).json({
+        ok: false,
+        warning: "NewsAPI returned 0 articles",
+        codeVersion: CODE_VERSION,
+        serverTime: new Date().toISOString(),
+        newsDebug: news.debug,
+      })
     }
     const prompt = buildDeepSeekPrompt(articles)
     const content = await deepSeekExtract(deepSeekKey, prompt)

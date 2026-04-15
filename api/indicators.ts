@@ -66,7 +66,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     return res.status(405).json({ error: "Method Not Allowed", codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
   }
 
-  res.setHeader("Cache-Control", "s-maxage=10, stale-while-revalidate=30")
+  res.setHeader("Cache-Control", "s-maxage=900, stale-while-revalidate=3600")
 
   const apiKey = process.env.TWELVE_DATA_API_KEY
   const updatedAt = new Date().toISOString()
