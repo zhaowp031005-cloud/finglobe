@@ -224,6 +224,37 @@ async function deepSeekExtract(apiKey: string, prompt: string) {
   return content
 }
 
+async function deepSeekRepairJsonArray(apiKey: string, text: string) {
+  const baseUrl = process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com"
+  const url = new URL("/v1/chat/completions", baseUrl)
+
+  const resp = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
+      temperature: 0,
+      messages: [
+        { role: "system", content: "你是一个 JSON 修复器。只输出严格 JSON 数组，不要 markdown，不要解释，不要多余文字。" },
+        {
+          role: "user",
+          content: ["请把下面文本转换为严格 JSON 数组。", "如果不是数组，请提取并输出其中的数组部分。", "", text].join("\n"),
+        },
+      ],
+    }),
+  })
+
+  const data = (await resp.json()) as unknown
+  const parsed = data as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } }
+  if (!resp.ok) throw new Error(parsed.error?.message ?? "DeepSeek repair error")
+  const content = parsed.choices?.[0]?.message?.content
+  if (!content) throw new Error("DeepSeek repair empty response")
+  return content
+}
+
 function tryParseJsonArray(text: string) {
   const firstBracket = text.indexOf("[")
   const lastBracket = text.lastIndexOf("]")
@@ -402,7 +433,13 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     }
     const prompt = buildDeepSeekPrompt(articles)
     const content = await deepSeekExtract(deepSeekKey, prompt)
-    const parsed = tryParseJsonArray(content)
+    let parsed: unknown
+    try {
+      parsed = tryParseJsonArray(content)
+    } catch (error) {
+      const repairedText = await deepSeekRepairJsonArray(deepSeekKey, content)
+      parsed = tryParseJsonArray(repairedText)
+    }
     const rawEvents = extractRawEvents(parsed)
     const events = rawEvents.map(coerceEvent).filter(Boolean) as ExtractedEvent[]
 
@@ -414,6 +451,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         extracted: 0,
         codeVersion: CODE_VERSION,
         serverTime: new Date().toISOString(),
+        newsDebug: news.debug,
         debug: {
           articles: articles.length,
           llmChars: content.length,
@@ -426,7 +464,13 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
 
     await upsertEventsToSupabase({ supabaseUrl, serviceKey, events })
 
-    return res.status(200).json({ ok: true, ingested: events.length, codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
+    return res.status(200).json({
+      ok: true,
+      ingested: events.length,
+      codeVersion: CODE_VERSION,
+      serverTime: new Date().toISOString(),
+      newsDebug: news.debug,
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return res.status(200).json({ ok: false, warning: message, codeVersion: CODE_VERSION, serverTime: new Date().toISOString() })
