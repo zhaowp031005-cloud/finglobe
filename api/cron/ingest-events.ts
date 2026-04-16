@@ -243,7 +243,13 @@ async function deepSeekRepairJsonArray(apiKey: string, text: string) {
         { role: "system", content: "你是一个 JSON 修复器。只输出严格 JSON 数组，不要 markdown，不要解释，不要多余文字。" },
         {
           role: "user",
-          content: ["请把下面文本转换为严格 JSON 数组。", "如果不是数组，请提取并输出其中的数组部分。", "", text].join("\n"),
+          content: [
+            "请把下面文本转换为严格 JSON 数组（必须能被 JSON.parse 解析）。",
+            "如果不是数组，请提取并输出其中的数组部分。",
+            "要求：所有字符串中不得包含未转义的换行符；如需换行，请使用 \\n。",
+            "",
+            text,
+          ].join("\n"),
         },
       ],
     }),
@@ -257,14 +263,44 @@ async function deepSeekRepairJsonArray(apiKey: string, text: string) {
   return content
 }
 
+function normalizeJsonText(text: string) {
+  let t = text
+  t = t.replace(/\uFEFF/g, "")
+  t = t.replace(/[“”]/g, "\"").replace(/[‘’]/g, "'")
+  let cleaned = ""
+  for (let i = 0; i < t.length; i++) {
+    const code = t.charCodeAt(i)
+    cleaned += code < 32 || code === 127 ? " " : t[i]
+  }
+  t = cleaned
+  t = t.replace(/,\s*([}\]])/g, "$1")
+  return t
+}
+
 function tryParseJsonArray(text: string) {
-  const firstBracket = text.indexOf("[")
-  const lastBracket = text.lastIndexOf("]")
+  const normalized = normalizeJsonText(text)
+  const firstBracket = normalized.indexOf("[")
+  const lastBracket = normalized.lastIndexOf("]")
   if (firstBracket >= 0 && lastBracket > firstBracket) {
-    const sliced = text.slice(firstBracket, lastBracket + 1)
+    const sliced = normalized.slice(firstBracket, lastBracket + 1)
     return JSON.parse(sliced) as unknown
   }
-  return JSON.parse(text) as unknown
+  return JSON.parse(normalized) as unknown
+}
+
+async function parseJsonArrayWithRepair(apiKey: string, content: string) {
+  try {
+    return { parsed: tryParseJsonArray(content) as unknown, stage: "direct" as const }
+  } catch {
+    const repaired1 = await deepSeekRepairJsonArray(apiKey, content)
+    try {
+      return { parsed: tryParseJsonArray(repaired1) as unknown, stage: "repair1" as const }
+    } catch (error2) {
+      const errText = error2 instanceof Error ? error2.message : String(error2)
+      const repaired2 = await deepSeekRepairJsonArray(apiKey, [repaired1, "", "上一次修复后的解析错误：", errText].join("\n"))
+      return { parsed: tryParseJsonArray(repaired2) as unknown, stage: "repair2" as const }
+    }
+  }
 }
 
 function normalizeCategory(value: string) {
@@ -436,11 +472,21 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     const prompt = buildDeepSeekPrompt(articles)
     const content = await deepSeekExtract(deepSeekKey, prompt)
     let parsed: unknown
+    let parseStage: "direct" | "repair1" | "repair2" = "direct"
     try {
-      parsed = tryParseJsonArray(content)
-    } catch {
-      const repairedText = await deepSeekRepairJsonArray(deepSeekKey, content)
-      parsed = tryParseJsonArray(repairedText)
+      const parsedResult = await parseJsonArrayWithRepair(deepSeekKey, content)
+      parsed = parsedResult.parsed
+      parseStage = parsedResult.stage
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return res.status(200).json({
+        ok: false,
+        warning: message,
+        codeVersion: CODE_VERSION,
+        serverTime: new Date().toISOString(),
+        newsDebug: news.debug,
+        parseDebug: { stage: parseStage },
+      })
     }
     const rawEvents = extractRawEvents(parsed)
     const events = rawEvents.map(coerceEvent).filter(Boolean) as ExtractedEvent[]
@@ -457,6 +503,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         debug: {
           articles: articles.length,
           llmChars: content.length,
+          parseStage,
           parsedType: Array.isArray(parsed) ? "array" : parsedObj ? "object" : typeof parsed,
           parsedKeys: parsedObj ? Object.keys(parsedObj).slice(0, 10) : undefined,
           rawEvents: rawEvents.length,
