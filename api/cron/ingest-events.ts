@@ -36,7 +36,7 @@ type ExtractedEvent = {
 
 type SourceItem = { url?: string; title?: string; publishedAt?: string; source?: string }
 
-const CODE_VERSION = "2026-04-15.1"
+const CODE_VERSION = "2026-04-16.1"
 
 function headerValue(headers: Record<string, string | string[] | undefined> | undefined, key: string) {
   if (!headers) return undefined
@@ -55,7 +55,16 @@ function queryValue(query: Record<string, string | string[] | undefined> | undef
 }
 
 function toNumber(value: unknown) {
-  const n = typeof value === "number" ? value : Number(value)
+  if (typeof value === "number") return Number.isFinite(value) ? value : null
+  if (typeof value === "string") {
+    const m = value.match(/-?\d+(?:\.\d+)?/)
+    if (m) {
+      const n = Number(m[0])
+      return Number.isFinite(n) ? n : null
+    }
+    return null
+  }
+  const n = Number(value)
   return Number.isFinite(n) ? n : null
 }
 
@@ -124,8 +133,9 @@ async function fetchNewsArticles(newsApiKey: string, hoursBack: number): Promise
   }
 
   const urlTop = new URL("https://newsapi.org/v2/top-headlines")
-  urlTop.searchParams.set("country", "us")
   urlTop.searchParams.set("category", "business")
+  urlTop.searchParams.set("language", "en")
+  urlTop.searchParams.set("q", q)
   urlTop.searchParams.set("pageSize", "100")
 
   const respTop = await fetch(urlTop.toString(), {
@@ -141,6 +151,39 @@ async function fetchNewsArticles(newsApiKey: string, hoursBack: number): Promise
   const parsedTop = dataTop as { status?: string; articles?: NewsApiArticle[]; message?: string; totalResults?: number }
   if (parsedTop.status !== "ok" || !Array.isArray(parsedTop.articles)) {
     throw new Error(parsedTop.message ?? "NewsAPI error")
+  }
+
+  if (parsedTop.articles.length === 0) {
+    const urlTopGeneral = new URL("https://newsapi.org/v2/top-headlines")
+    urlTopGeneral.searchParams.set("category", "general")
+    urlTopGeneral.searchParams.set("language", "en")
+    urlTopGeneral.searchParams.set("q", q)
+    urlTopGeneral.searchParams.set("pageSize", "100")
+
+    const respTopGeneral = await fetch(urlTopGeneral.toString(), {
+      headers: { "X-Api-Key": newsApiKey },
+    })
+
+    if (!respTopGeneral.ok) {
+      const text = await respTopGeneral.text()
+      throw new Error(text)
+    }
+
+    const dataTopGeneral = (await respTopGeneral.json()) as unknown
+    const parsedTopGeneral = dataTopGeneral as {
+      status?: string
+      articles?: NewsApiArticle[]
+      message?: string
+      totalResults?: number
+    }
+    if (parsedTopGeneral.status !== "ok" || !Array.isArray(parsedTopGeneral.articles)) {
+      throw new Error(parsedTopGeneral.message ?? "NewsAPI error")
+    }
+
+    return {
+      articles: parsedTopGeneral.articles,
+      debug: { endpoint: "top-headlines", totalResults: parsedTopGeneral.totalResults },
+    }
   }
 
   return {
@@ -370,9 +413,35 @@ async function deepSeekTranslateEventsToZh(apiKey: string, events: ExtractedEven
 
   const parsedResult = await parseJsonArrayWithRepair(apiKey, text)
   const raw = extractRawEvents(parsedResult.parsed)
-  const translated = raw.map(coerceEvent).filter(Boolean) as ExtractedEvent[]
-  if (translated.length === events.length) return translated
-  return events
+  const translatedRecords = raw.map(asRecord)
+
+  const merged: ExtractedEvent[] = events.map((e, idx) => {
+    const tr = translatedRecords[idx]
+    if (!tr) return e
+    const title = toString(tr["title"]) || e.title
+    const summary = toString(tr["summary"]) || e.summary
+    const latest_updates =
+      toString(tr["latest_updates"] ?? tr["latestUpdates"] ?? tr["latest_update"] ?? tr["latestUpdate"]) || e.latest_updates
+
+    const impact = asRecord(tr["impact"])
+    const sectors = Array.isArray(impact?.["sectors"]) ? (impact?.["sectors"] as unknown[]).map(toString).filter(Boolean) : e.impact.sectors
+    const positiveCompanies = Array.isArray(impact?.["positiveCompanies"])
+      ? (impact?.["positiveCompanies"] as unknown[]).map(toString).filter(Boolean)
+      : e.impact.positiveCompanies
+    const negativeCompanies = Array.isArray(impact?.["negativeCompanies"])
+      ? (impact?.["negativeCompanies"] as unknown[]).map(toString).filter(Boolean)
+      : e.impact.negativeCompanies
+
+    return {
+      ...e,
+      title,
+      summary,
+      latest_updates,
+      impact: { sectors, positiveCompanies, negativeCompanies },
+    }
+  })
+
+  return merged
 }
 
 async function deepSeekSupplementEvents(apiKey: string, articles: NewsApiArticle[], existing: ExtractedEvent[], need: number) {
@@ -606,9 +675,11 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     }
 
     const maxSupplementRounds = 3
+    const supplementAdded: number[] = []
     for (let i = 0; i < maxSupplementRounds && events.length < 30; i++) {
       const need = 30 - events.length
       const extra = await deepSeekSupplementEvents(deepSeekKey, articles, events, need)
+      supplementAdded.push(extra.length)
       if (!extra.length) break
       const merged = new Map<string, ExtractedEvent>()
       for (const e of events) merged.set(eventKey(e), e)
@@ -648,6 +719,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       codeVersion: CODE_VERSION,
       serverTime: new Date().toISOString(),
       newsDebug: news.debug,
+      supplement: { rounds: supplementAdded.length, added: supplementAdded },
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

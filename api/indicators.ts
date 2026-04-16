@@ -12,7 +12,7 @@ type ResponseLike = {
   setHeader: (name: string, value: string) => void
 }
 
-const CODE_VERSION = "2026-04-15.1"
+const CODE_VERSION = "2026-04-16.1"
 
 const DEFAULT_TWELVE_SYMBOLS: Record<string, string> = {
   shcomp: "ASHR",
