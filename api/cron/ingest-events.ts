@@ -226,6 +226,35 @@ async function deepSeekExtract(apiKey: string, prompt: string) {
   return content
 }
 
+async function deepSeekChat(apiKey: string, messages: Array<{ role: "system" | "user"; content: string }>) {
+  const baseUrl = process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com"
+  const url = new URL("/v1/chat/completions", baseUrl)
+
+  const resp = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
+      temperature: 0,
+      messages,
+    }),
+  })
+
+  const data = (await resp.json()) as unknown
+  const parsed = data as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } }
+
+  if (!resp.ok) {
+    throw new Error(parsed.error?.message ?? "DeepSeek API error")
+  }
+
+  const content = parsed.choices?.[0]?.message?.content
+  if (!content) throw new Error("DeepSeek empty response")
+  return content
+}
+
 async function deepSeekRepairJsonArray(apiKey: string, text: string) {
   const baseUrl = process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com"
   const url = new URL("/v1/chat/completions", baseUrl)
@@ -301,6 +330,85 @@ async function parseJsonArrayWithRepair(apiKey: string, content: string) {
       return { parsed: tryParseJsonArray(repaired2) as unknown, stage: "repair2" as const }
     }
   }
+}
+
+function eventKey(e: ExtractedEvent) {
+  return `${e.title}|${e.category}|${e.lat.toFixed(3)},${e.lng.toFixed(3)}`
+}
+
+async function deepSeekTranslateEventsToZh(apiKey: string, events: ExtractedEvent[]) {
+  const payload = events.map((e) => ({
+    title: e.title,
+    summary: e.summary,
+    latest_updates: e.latest_updates,
+    category: e.category,
+    lat: e.lat,
+    lng: e.lng,
+    occurred_at: e.occurred_at ?? null,
+    impact: e.impact,
+    sources: e.sources ?? null,
+  }))
+
+  const text = await deepSeekChat(apiKey, [
+    {
+      role: "system",
+      content: "你是一个中英翻译与规范化系统。只输出严格 JSON 数组，不要 markdown，不要解释，不要多余文字。",
+    },
+    {
+      role: "user",
+      content: [
+        "请把输入 JSON 数组中的所有文本字段翻译为简体中文：title/summary/latest_updates，以及 impact.sectors/positiveCompanies/negativeCompanies。",
+        "要求：",
+        "- category/lat/lng/occurred_at/sources.url/sources.publishedAt/sources.source 保持原样。",
+        "- sources.title 可以翻译成中文。",
+        "- 输出数组长度与顺序必须与输入一致。",
+        "",
+        JSON.stringify(payload),
+      ].join("\n"),
+    },
+  ])
+
+  const parsedResult = await parseJsonArrayWithRepair(apiKey, text)
+  const raw = extractRawEvents(parsedResult.parsed)
+  const translated = raw.map(coerceEvent).filter(Boolean) as ExtractedEvent[]
+  if (translated.length === events.length) return translated
+  return events
+}
+
+async function deepSeekSupplementEvents(apiKey: string, articles: NewsApiArticle[], existing: ExtractedEvent[], need: number) {
+  const compact = articles
+    .slice(0, 100)
+    .map((a) => ({
+      title: a.title ?? "",
+      description: a.description ?? "",
+      url: a.url ?? "",
+      publishedAt: a.publishedAt ?? "",
+      source: a.source?.name ?? "",
+    }))
+
+  const used = existing.map((e) => ({ title: e.title, category: e.category, lat: e.lat, lng: e.lng }))
+
+  const prompt = [
+    "你是一个信息抽取系统。",
+    `请基于新闻列表，补充输出额外 ${need} 条事件（只输出 JSON 数组）。`,
+    "要求：",
+    "- 必须使用简体中文输出 title/summary/latest_updates。",
+    "- 每条必须包含可解析的 lat/lng（不要留空，不要 null）。",
+    "- 不要与已存在事件重复（避免相同标题/同一地点同一类别的重复）。",
+    "- category 只能是 war/politics/economy/disaster。",
+    "- sources 至少 1 条。",
+    "",
+    "已存在事件（用于去重）：",
+    JSON.stringify(used),
+    "",
+    "新闻列表：",
+    JSON.stringify(compact),
+  ].join("\n")
+
+  const content = await deepSeekExtract(apiKey, prompt)
+  const parsedResult = await parseJsonArrayWithRepair(apiKey, content)
+  const raw = extractRawEvents(parsedResult.parsed)
+  return raw.map(coerceEvent).filter(Boolean) as ExtractedEvent[]
 }
 
 function normalizeCategory(value: string) {
@@ -489,7 +597,28 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       })
     }
     const rawEvents = extractRawEvents(parsed)
-    const events = rawEvents.map(coerceEvent).filter(Boolean) as ExtractedEvent[]
+    let events = rawEvents.map(coerceEvent).filter(Boolean) as ExtractedEvent[]
+
+    if (events.length) {
+      const deduped = new Map<string, ExtractedEvent>()
+      for (const e of events) deduped.set(eventKey(e), e)
+      events = Array.from(deduped.values())
+    }
+
+    const maxSupplementRounds = 3
+    for (let i = 0; i < maxSupplementRounds && events.length < 30; i++) {
+      const need = 30 - events.length
+      const extra = await deepSeekSupplementEvents(deepSeekKey, articles, events, need)
+      if (!extra.length) break
+      const merged = new Map<string, ExtractedEvent>()
+      for (const e of events) merged.set(eventKey(e), e)
+      for (const e of extra) merged.set(eventKey(e), e)
+      events = Array.from(merged.values()).slice(0, 30)
+    }
+
+    if (events.length) {
+      events = await deepSeekTranslateEventsToZh(deepSeekKey, events)
+    }
 
     if (!events.length) {
       const parsedObj = asRecord(parsed)
