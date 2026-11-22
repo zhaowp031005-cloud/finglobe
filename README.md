@@ -45,7 +45,7 @@ npm run dev
 
 ## 小红书视频合规
 
-所有发布到小红书的视频都按 [docs/xiaohongshu-rules.md](docs/xiaohongshu-rules.md) 制作。发布前用词库扫描口播稿、字幕和文案：
+所有视频制作和相关文案撰写都按 skill [xiaohongshu-compliance](.claude/skills/xiaohongshu-compliance/SKILL.md) 执行，完整规则见 [references/rules.md](.claude/skills/xiaohongshu-compliance/references/rules.md)。发布前用词库扫描口播稿、字幕和文案：
 
 ```bash
 npm run xhs-check -- 口播稿.txt 字幕.srt 标题正文.txt

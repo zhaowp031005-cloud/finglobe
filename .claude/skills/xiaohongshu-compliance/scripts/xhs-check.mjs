@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // 小红书违禁词/违规表述自查。
 // 用法：
-//   npm run xhs-check -- 口播稿.txt 字幕.srt 标题正文.txt
-//   echo "要检查的文字" | npm run xhs-check
-// 词库：docs/xiaohongshu-banned-words.json；规则说明：docs/xiaohongshu-rules.md
+//   node scripts/xhs-check.mjs 口播稿.txt 字幕.srt 标题正文.txt     （FinGlobe 仓库里：npm run xhs-check -- 文件...）
+//   echo "要检查的文字" | node scripts/xhs-check.mjs
+// 词库：../references/banned-words.json；规则说明：../references/rules.md
 // 命中"红线"时退出码为 1。
 
 import { readFileSync } from 'node:fs';
@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const db = JSON.parse(readFileSync(join(here, '..', 'docs', 'xiaohongshu-banned-words.json'), 'utf8'));
+const db = JSON.parse(readFileSync(join(here, '..', 'references', 'banned-words.json'), 'utf8'));
 
 const LEVEL_LABEL = { block: '红线', warn: '注意', info: '提示' };
 const LEVEL_RANK = { block: 0, warn: 1, info: 2 };
@@ -115,7 +115,7 @@ const files = process.argv.slice(2);
 const inputs = [];
 if (files.length === 0) {
   if (process.stdin.isTTY) {
-    console.log('用法：npm run xhs-check -- <文件...>   或   echo "文字" | npm run xhs-check');
+    console.log('用法：node scripts/xhs-check.mjs <文件...>   或   echo "文字" | node scripts/xhs-check.mjs');
     process.exit(2);
   }
   inputs.push({ name: '(标准输入)', text: await readStdin() });
@@ -146,6 +146,6 @@ if (total.block > 0) console.log('红线必须改到 0 才能发布（事实陈�
 if (total.warn > 0) console.log('"注意"项逐条确认：事实陈述可保留，营销/诱导语境必须改。');
 console.log('\n文字扫描之外还要人工检查：');
 for (const m of db.manualChecks ?? []) console.log(`  - ${m}`);
-console.log('完整规则：docs/xiaohongshu-rules.md');
+console.log('完整规则：xiaohongshu-compliance skill 的 references/rules.md');
 
 process.exit(total.block > 0 ? 1 : 0);

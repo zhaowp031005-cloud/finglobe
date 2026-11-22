@@ -1,6 +1,6 @@
 {
   "version": "2026-11-22",
-  "about": "小红书违禁词/高风险表述词库，供 scripts/xhs-check.mjs 使用。规则说明见 docs/xiaohongshu-rules.md。level: block=红线（必须改），warn=注意（逐条确认，事实陈述可保留但建议改写），info=提示。小红书没有公开官方词表，本词库 = 官方规则落地 + 第三方整理 + 本项目财经内容经验，宁严勿松。",
+  "about": "小红书违禁词/高风险表述词库，供 scripts/xhs-check.mjs 使用。规则说明见 references/rules.md。level: block=红线（必须改），warn=注意（逐条确认，事实陈述可保留但建议改写），info=提示。小红书没有公开官方词表，本词库 = 官方规则落地 + 第三方整理 + 本项目财经内容经验，宁严勿松。",
   "categories": [
     {
       "id": "finance_advice",
