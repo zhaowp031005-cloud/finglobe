@@ -42,3 +42,11 @@ npm run dev
 - 弹窗会从 `GET /api/ohlc?symbol=<id>&range=<1D|1W|1M|3M|1Y>` 拉取 OHLC 数据用于绘图
 
 如 Twelve Data 对某些指数/商品代码不兼容，可在 [api/indicators.ts](file:///d:/Trae/Financial_Earth/api/indicators.ts) 与 [api/ohlc.ts](file:///d:/Trae/Financial_Earth/api/ohlc.ts) 中调整 symbol 映射。
+
+## 小红书视频合规
+
+所有发布到小红书的视频都按 [docs/xiaohongshu-rules.md](docs/xiaohongshu-rules.md) 制作。发布前用词库扫描口播稿、字幕和文案：
+
+```bash
+npm run xhs-check -- 口播稿.txt 字幕.srt 标题正文.txt
+```
